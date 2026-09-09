@@ -1046,9 +1046,27 @@
 
         .avatar-wrap {
             position: relative;
-            width: 36px;
-            height: 36px;
+            width: 44px;
+            height: auto;
             flex: 0 0 auto;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 2px;
+        }
+        /* 头像下方的身份名（随身份切换同步更新） */
+        .avatar-name {
+            max-width: 44px;
+            font-size: 10px;
+            line-height: 1.2;
+            text-align: center;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            color: var(--text-secondary, #8a7a5c);
+            pointer-events: none;
+            -webkit-user-select: none;
+            user-select: none;
         }
         .user-avatar {
             width: 36px;
@@ -1072,7 +1090,10 @@
         /* 透明事件盖板：盖在头像上方接收所有短按/长按，浏览器长按到的是空 div，不弹图片菜单 */
         .user-avatar-hit {
             position: absolute;
-            inset: 0;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 36px;   /* 只覆盖头像本体，不遮挡下方身份名 */
             z-index: 3;
             cursor: pointer;
             -webkit-touch-callout: none;
@@ -4764,6 +4785,8 @@
                 <div class="avatar-wrap" id="avatarWrap">
                     <div class="user-avatar" id="userAvatar" title="家长：长按头像进选中的孩子 · 孩子：短按切同辈，长按回家长"></div>
                     <div class="user-avatar-hit" id="userAvatarHit" title="家长：长按头像进选中的孩子 · 孩子：短按切同辈，长按回家长"></div>
+                    <!-- 头像下方身份名：切换身份时同步更新，一眼看出当前是谁 -->
+                    <div class="avatar-name" id="avatarName"></div>
                 </div>
             </div>
         </div>
@@ -15345,6 +15368,8 @@
             if (sidebarNick) sidebarNick.textContent = nm;
             setAvatar(sidebarAv, av, nm);
             setAvatar(topAv, av, nm);
+            var topName = document.getElementById('avatarName');
+            if (topName) topName.textContent = nm;   // 头像下方身份名随身份同步
             const rt = document.getElementById('roleTag');
             if (rt) rt.textContent = nm + ' · ' + ROLE_LABELS[ROLE];
         }

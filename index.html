@@ -15979,6 +15979,24 @@
         // 鉴权头，跨设备必然 401 —— 所谓"实时推送"从未真正生效过。
         // 做法：定时拉极小的 /api/sync-status（只含各数据文件最后保存时间，约 200 字节），
         // 时间戳变了才去拉对应孩子的数据；再字节比对，无变化不重绘，避免卡片周期性闪屏。
+        // 本端最近写过的孩子时间戳：写操作已主动刷新，收到变更信号时若本端刚写过则跳过回拉
+        var _selfSaveAt = {};
+        function markSelfSave(childKey) { if (childKey) _selfSaveAt[childKey] = Date.now(); }
+        // @anchor silent-reconnect 发现变更时：先拉当前孩子数据与缓存做字节级比对，
+        // 完全相同就什么都不做，真变了才刷新 —— 避免小怪兽卡片/情绪确认整屏周期性闪一下。
+        var _silentChecking = false;
+        async function silentCheckRefresh() {
+            if (_silentChecking) return;
+            _silentChecking = true;
+            try {
+                var d = await api(FA_API + '/api/child/' + CHILD_NAME);
+                if (d && JSON.stringify(childDataCache[CHILD_NAME] || null) !== JSON.stringify(d)) {
+                    childDataCache[CHILD_NAME] = d;
+                    try { refreshCurrentView(true); } catch (e) {}
+                }
+            } catch (e) { /* 网络抖动静默跳过，下轮再试 */ }
+            _silentChecking = false;
+        }
         var _lastSyncStamp = {};
         (function setupLiveSync() {
             var _first = true;
@@ -16008,7 +16026,7 @@
                     }
                     if (changed.indexOf(CHILD_NAME) !== -1) silentCheckRefresh();
                     if (typeof IS_PARENT !== 'undefined' && IS_PARENT) { try { refreshAssignBadge(); } catch (e) {} }
-                } catch (e) { /* 网络抖动：下一轮自动重试 */ }
+                } catch (e) { console.warn('[sync] 轮询异常（下一轮重试）:', e); }
             }
             setInterval(poll, 8000);
             document.addEventListener('visibilitychange', function () { if (!document.hidden) poll(); });

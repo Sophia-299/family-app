@@ -15530,7 +15530,7 @@
             if (syncServer !== false) {
                 try {
                     fetch('https://djmmrlnqdlvhjmxdxgtn.functions.supabase.co/family-app/api/settings/theme?role=' + encodeURIComponent(ROLE), {
-                        method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        method: 'POST', headers: { 'Content-Type': 'application/json', 'x-fa-token': (localStorage.getItem('fa_token') || '') },
                         body: JSON.stringify({ theme: key })
                     }).catch(function(){});
                 } catch(e) {}

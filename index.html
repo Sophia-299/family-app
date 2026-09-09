@@ -7723,11 +7723,9 @@
                     list.appendChild(row);
                 }
             }
-            fetch('https://djmmrlnqdlvhjmxdxgtn.functions.supabase.co/family-app/api/pomodoro?child=' + encodeURIComponent(c))
-                .then(function (r) { return r.ok ? r.json() : null; })
-                .then(function (j) {
-                    if (!j || !j.data) return;
-                    var d = j.data;
+            api(FA_API + '/api/pomodoro?child=' + encodeURIComponent(c))
+                .then(function (d) {
+                    if (!d) return;
                     var t = document.getElementById(pfx + 'Today_' + c);
                     if (t) t.textContent = (d.today || 0);
                     if (IS_PARENT) {
@@ -8981,7 +8979,7 @@
         }
         function pmSaveServer(d) {
             try {
-                fetch('https://djmmrlnqdlvhjmxdxgtn.functions.supabase.co/family-app/api/pomodoro/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ durations: d }) })
+                api(FA_API + '/api/pomodoro/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ durations: d }) })
                     .catch(function () {});
             } catch (e) {}
         }
@@ -9012,10 +9010,9 @@
             box.dataset.init = '1';
             // 先尝试拉服务端配置，失败再用本地；两者都写入编辑态
             try {
-                fetch('https://djmmrlnqdlvhjmxdxgtn.functions.supabase.co/family-app/api/pomodoro?child=' + encodeURIComponent(CHILD_NAME || 'xixi'))
-                    .then(function (r) { return r.ok ? r.json() : null; })
-                    .then(function (j) {
-                        var d = j && j.data && j.data.durations;
+                api(FA_API + '/api/pomodoro?child=' + encodeURIComponent(CHILD_NAME || 'xixi'))
+                    .then(function (d) {
+                        d = d && d.durations;
                         if (d && d.focus && d.rest) { pmSaveLocal(d); }
                         pmEditingGroups = pmToGroups(pmLoadLocal());
                         renderPmSettings();
@@ -9142,7 +9139,7 @@
         function pmLog(mins) {
             // 只记流水（番茄数），不给金币
             try {
-                fetch('https://djmmrlnqdlvhjmxdxgtn.functions.supabase.co/family-app/api/pomodoro/log', {
+                api(FA_API + '/api/pomodoro/log', {
                     method: 'POST', headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ child: CHILD_NAME || 'xixi', taskId: pmState.taskId, name: pmState.taskName, mins: mins })
                 }).catch(function () {});
@@ -13102,7 +13099,7 @@
         var __tagGroupsSyncing = false;
         function saveTagGroupsServer() {
             try {
-                fetch('https://djmmrlnqdlvhjmxdxgtn.functions.supabase.co/family-app/api/tag-groups', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ groups: TAG_GROUPS }) })
+                api(FA_API + '/api/tag-groups', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ groups: TAG_GROUPS }) })
                     .catch(function(){});
             } catch(e){}
         }
@@ -13132,16 +13129,15 @@
         function syncTagGroupsFromServer() {
             if (__tagGroupsSyncing) return;
             __tagGroupsSyncing = true;
-            fetch('https://djmmrlnqdlvhjmxdxgtn.functions.supabase.co/family-app/api/tag-groups', { method:'GET', headers:{'Cache-Control':'no-store'} })
-                .then(function(r){ return r && r.ok ? r.json() : null; })
-                .then(function(j){
+            api(FA_API + '/api/tag-groups', { headers:{'Cache-Control':'no-store'} })
+                .then(function(g){
                     __tagGroupsSyncing = false;
-                    if (!j || !j.ok || !Array.isArray(j.data) || !j.data.length) {
+                    if (!Array.isArray(g) || !g.length) {
                         // 服务端尚无数据：仅当本地为自定义配置（非默认，补齐板块前已记录）才上报，避免用默认 4 组覆盖用户真实配置
                         if (__localCustom) saveTagGroupsServer();
                         return;
                     }
-                    TAG_GROUPS = j.data;
+                    TAG_GROUPS = g;
                     syncBoardGroups();
                     saveTagGroupsLocal();
                     refreshTagGroupsUI();
@@ -15978,80 +15974,45 @@
         // Startup
         initApp();
 
-        // ---- Live cross-client sync via SSE ----
-        // 服务端任意保存经 /api/events 推送，收到即刷新（debounce 合并连续保存）。
-        // 事件驱动、跨设备：孩子端保存 → 家长端（另一标签/另一设备）自动刷新角标与列表。
-        // 本端最近写过的孩子文件时间戳：写操作已主动刷新，SSE 推送只同步其他端，避免本端重复刷新小卡片（如复制任务后双刷）
-        var _selfSaveAt = {};
-        function markSelfSave(childKey) { if (childKey) _selfSaveAt[childKey] = Date.now(); }
-        var _liveTimer = null;
-        function liveRefresh() {
-            if (_refreshing) return;
-            if (_liveTimer) clearTimeout(_liveTimer);
-            _liveTimer = setTimeout(function () {
-                try { refreshCurrentView(true); } catch (e) {}
-            }, 600);
-        }
-        // @anchor sse-silent-reconnect SSE 断线重连专用：外层隧道会周期性掐断空闲长连接
-        // （实测约 20s 一断），若重连即全量重绘，小怪兽卡片/情绪确认就会整屏周期性闪一下。
-        // 改为先拉当前孩子数据与缓存做字节级比对，完全相同就什么都不做，真变了才刷新。
-        var _silentChecking = false;
-        async function silentCheckRefresh() {
-            if (_silentChecking) return;
-            _silentChecking = true;
-            try {
-                var d = await api('https://djmmrlnqdlvhjmxdxgtn.functions.supabase.co/family-app/api/child/' + CHILD_NAME);
-                if (d && JSON.stringify(childDataCache[CHILD_NAME] || null) !== JSON.stringify(d)) {
-                    childDataCache[CHILD_NAME] = d;
-                    try { refreshCurrentView(true); } catch (e) {}
-                }
-            } catch (e) { /* 网络抖动静默跳过，下轮重连再试 */ }
-            _silentChecking = false;
-        }
+        // ---- 跨设备同步（轻量版本信号轮询）----
+        // 背景：后端 /api/events 只是占位心跳（不推送任何变更），且 EventSource 无法携带自定义
+        // 鉴权头，跨设备必然 401 —— 所谓"实时推送"从未真正生效过。
+        // 做法：定时拉极小的 /api/sync-status（只含各数据文件最后保存时间，约 200 字节），
+        // 时间戳变了才去拉对应孩子的数据；再字节比对，无变化不重绘，避免卡片周期性闪屏。
+        var _lastSyncStamp = {};
         (function setupLiveSync() {
-            if (typeof EventSource === 'undefined') return;
-            // 精准刷新：SSE 推送的是文件名（如 xixi.json），解析出孩子 key 后只刷该孩子缓存 + 角标，比整体刷新更轻更快
-            async function preciseLiveRefresh(childKey) {
-                if (!childKey) { liveRefresh(); return; }
-                if (!MANAGEABLE_CHILDREN || MANAGEABLE_CHILDREN.indexOf(childKey) === -1) return; // 只关心孩子数据变更
+            var _first = true;
+            async function poll() {
+                if (document.hidden) return;
                 try {
-                    var d = await api('https://djmmrlnqdlvhjmxdxgtn.functions.supabase.co/family-app/api/child/' + childKey);
-                    if (d) childDataCache[childKey] = d;   // 该孩子缓存立即最新 → 弹窗数字即时准确
-                } catch (e) {}
-                try { refreshAssignBadge(); } catch (e) {}  // 角标立即 +N（家长端立刻看到待审核）
-                // 任一端正查看该孩子时，顺带刷新当前视图（孩子端也能实时看到家长审核结果）
-                // 本端刚写过该孩子（如复制/审核/编辑已主动刷新），忽略本次 SSE 推送避免小卡片双刷；仅其他端依赖此推送刷新
-                if (CHILD_NAME === childKey) {
-                    var _sg = _selfSaveAt[childKey];
-                    if (_sg && (Date.now() - _sg) < 2000) { /* 本端已刷新，跳过 SSE 双刷 */ }
-                    else { try { refreshCurrentView(true); } catch (e) {} }
-                }
+                    var st = await api(FA_API + '/api/sync-status');
+                    var status = (st && st.status) || {};
+                    var changed = [];
+                    Object.keys(status).forEach(function (k) {
+                        if (['xixi', 'jiaojiao', 'settings'].indexOf(k) === -1) return;
+                        if (_first || _lastSyncStamp[k] === undefined) { _lastSyncStamp[k] = status[k]; return; }
+                        if (status[k] === _lastSyncStamp[k]) return;
+                        _lastSyncStamp[k] = status[k];
+                        var sg = _selfSaveAt[k];
+                        if (sg && (Date.now() - sg) < 3000) return;   // 本端刚写过，不必回拉
+                        changed.push(k);
+                    });
+                    if (_first) { _first = false; return; }
+                    if (!changed.length) return;
+                    // 其他孩子有变化：只拉变化的孩子，保证家长端角标数字准确
+                    if (typeof IS_PARENT !== 'undefined' && IS_PARENT && typeof MANAGEABLE_CHILDREN !== 'undefined') {
+                        await Promise.all(changed.map(function (k) {
+                            if (k === CHILD_NAME || MANAGEABLE_CHILDREN.indexOf(k) === -1) return Promise.resolve();
+                            return api(FA_API + '/api/child/' + k).then(function (d) { if (d) childDataCache[k] = d; }).catch(function () {});
+                        }));
+                    }
+                    if (changed.indexOf(CHILD_NAME) !== -1) silentCheckRefresh();
+                    if (typeof IS_PARENT !== 'undefined' && IS_PARENT) { try { refreshAssignBadge(); } catch (e) {} }
+                } catch (e) { /* 网络抖动：下一轮自动重试 */ }
             }
-            var _sseOpened = false;
-            function connect() {
-                var es = new EventSource('https://djmmrlnqdlvhjmxdxgtn.functions.supabase.co/family-app/api/events');
-                es.onopen = function () {
-                    // 首次连上不补刷：页面刚拉过全量数据，SSE 通常在加载后期才建好，
-                    // 此时再来一次整体重绘，用户看到的就是「有字 -> 无字 -> 有字」闪一下。
-                    // 断线重连也不直接全量重绘：隧道周期性断连（约20s一次）+无条件刷新
-                    // = 小怪兽/情绪确认周期性闪屏。改为数据比对，无变化不重绘。@sse-silent-reconnect
-                    if (!_sseOpened) { _sseOpened = true; return; }
-                    silentCheckRefresh();
-                };
-                es.onmessage = function (evt) {                    // 收到变更推送：精准刷新对应孩子
-                    var key = (evt.data || '').replace(/\.json$/, '');
-                    preciseLiveRefresh(key);
-                };
-                es.onerror = function () { /* EventSource 自动重连，重连后 onopen 会再触发 */ };
-            }
-            // 推迟 SSE 长连接：等首屏 load 完成后再建连，避免 iOS Safari 进度条因等待长连接首包而卡在中间
-            if (document.readyState === 'complete') {
-                connect();
-            } else {
-                window.addEventListener('load', function () { setTimeout(connect, 0); });
-            }
+            setInterval(poll, 8000);
+            document.addEventListener('visibilitychange', function () { if (!document.hidden) poll(); });
         })();
-
     </script>
 
     <!-- 'Tags' dialog: floating popup to add/remove custom tags -->

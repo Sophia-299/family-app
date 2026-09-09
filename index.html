@@ -5958,9 +5958,12 @@
 
         async function api(url, opts = {}) {
             const fullUrl = url + (url.includes('?') ? '&' : '?') + 'role=' + ROLE;
-            const res = await fetch(fullUrl, opts);
+            const token = (window.__faToken || localStorage.getItem('fa_token') || '');
+            const headers = Object.assign({}, opts.headers || {}, token ? { 'x-fa-token': token } : {});
+            const res = await fetch(fullUrl, Object.assign({}, opts, { headers }));
             if (!res.ok) {
                 const err = await res.json().catch(() => ({}));
+                if (res.status === 401) { if (window.__showLoginGate) window.__showLoginGate(); }
                 throw new Error(err.error || 'API error');
             }
             return normalizeApi(await res.json());
@@ -16078,6 +16081,45 @@
         </div>
     </div>
 
+
+    <!-- 总钥匙门禁遮罩（跨域版：令牌存 localStorage，API 带 x-fa-token 头） -->
+    <div id="faGate" style="display:none;position:fixed;inset:0;z-index:99999;background:linear-gradient(135deg,#1f2a44,#3a2b5f);color:#fff;align-items:center;justify-content:center;font-family:system-ui,-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
+      <div style="background:rgba(255,255,255,.08);padding:34px 38px;border-radius:18px;width:320px;text-align:center;box-shadow:0 10px 40px rgba(0,0,0,.35)">
+        <h1 style="font-size:20px;margin:0 0 6px">🔑 家庭学习工作台</h1>
+        <p style="opacity:.7;font-size:13px;margin:0 0 22px">请输入访问口令</p>
+        <input id="faPw" type="password" placeholder="访问口令" autofocus style="width:100%;padding:12px 14px;border-radius:10px;border:1px solid rgba(255,255,255,.2);background:rgba(255,255,255,.1);color:#fff;font-size:15px;box-sizing:border-box;margin-bottom:14px;outline:none">
+        <button id="faGo" style="width:100%;padding:12px;border:0;border-radius:10px;background:#ffce6b;color:#3a2b5f;font-size:15px;font-weight:700;cursor:pointer">进入</button>
+        <div id="faMsg" style="color:#ff9b9b;font-size:13px;min-height:18px;margin-top:10px"></div>
+        <div style="margin-top:14px"><a id="faChange" style="color:#ffce6b;font-size:12px;text-decoration:none;cursor:pointer">忘记口令？由家长修改</a></div>
+      </div>
+    </div>
+    <script>
+    (function(){
+      var API='https://djmmrlnqdlvhjmxdxgtn.functions.supabase.co/family-app/api';
+      function showGate(){var g=document.getElementById('faGate');if(g)g.style.display='flex';var p=document.getElementById('faPw');if(p)setTimeout(function(){p.focus();},50);}
+      window.__showLoginGate=showGate;
+      async function enter(){
+        var pw=document.getElementById('faPw').value;
+        if(!pw){document.getElementById('faMsg').textContent='请输入口令';return;}
+        try{
+          var r=await fetch(API+'/settings/verify-password',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:pw})});
+          var j=await r.json();
+          if(j&&j.ok&&j.data&&j.data.valid){
+            localStorage.setItem('fa_token',j.data.token);
+            window.__faToken=j.data.token;
+            var g=document.getElementById('faGate');if(g)g.style.display='none';
+            location.reload();
+          } else { document.getElementById('faMsg').textContent='口令不正确，请重试'; }
+        }catch(e){ document.getElementById('faMsg').textContent='网络错误，请重试'; }
+      }
+      document.addEventListener('DOMContentLoaded',function(){
+        var go=document.getElementById('faGo');if(go)go.onclick=enter;
+        var pw=document.getElementById('faPw');if(pw)pw.addEventListener('keydown',function(e){if(e.key==='Enter')enter();});
+        var ch=document.getElementById('faChange');if(ch)ch.onclick=function(){window.open('https://djmmrlnqdlvhjmxdxgtn.functions.supabase.co/family-app/change-password','_blank');};
+        if(!localStorage.getItem('fa_token')){showGate();}
+      });
+    })();
+    </script>
 
     </body>
 </html>

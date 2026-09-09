@@ -15528,16 +15528,13 @@
             try { localStorage.setItem('appTheme_' + ROLE, key); } catch(e) {}
             document.querySelectorAll('.theme-card').forEach(function(c){ c.classList.toggle('active', c.dataset.key === key); });
             if (syncServer !== false) {
-                /* 主题按角色分别存（themeByRole），若只写当前角色，换设备走另一视角就会回退默认金色。
-                   为保证「换设备/换视角都同步」，这里一次改动同步写入全部角色。 */
+                /* 主题按角色各自独立：只写当前角色，家长台/淅淅/娇娇互不影响。
+                   同一角色跨设备仍会同步（都读写 themeByRole[本角色] 这一格）。 */
                 try {
-                    var _tok = localStorage.getItem('fa_token') || '';
-                    ['parent', 'xixi', 'jiaojiao'].forEach(function(_r) {
-                        fetch('https://djmmrlnqdlvhjmxdxgtn.functions.supabase.co/family-app/api/settings/theme?role=' + encodeURIComponent(_r), {
-                            method: 'POST', headers: { 'Content-Type': 'application/json', 'x-fa-token': _tok },
-                            body: JSON.stringify({ theme: key })
-                        }).catch(function(){});
-                    });
+                    fetch('https://djmmrlnqdlvhjmxdxgtn.functions.supabase.co/family-app/api/settings/theme?role=' + encodeURIComponent(ROLE), {
+                        method: 'POST', headers: { 'Content-Type': 'application/json', 'x-fa-token': (localStorage.getItem('fa_token') || '') },
+                        body: JSON.stringify({ theme: key })
+                    }).catch(function(){});
                 } catch(e) {}
             }
         }

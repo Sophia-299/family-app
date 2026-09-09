@@ -5458,16 +5458,12 @@
                 </div>
                 <div class="setting-section parent-only cozy" id="dataBackupSection" data-end="parent">
                     <div class="setting-section-head">
-                        <div class="setting-section-title">⬇️ 备份下载</div>
+                        <div class="setting-section-title">⬇️ 离线备份包</div>
                         <div class="cloud-head-actions">
-                            <button class="btn-secondary" type="button" style="flex:0 0 auto;min-height:32px;padding:6px 12px;font-size:13px;cursor:pointer;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--card-bg);color:var(--text-primary);white-space:nowrap;" onclick="backupDownloadData()">备份数据（JSON）</button>
+                            <button class="btn-confirm" type="button" style="flex:0 0 auto;min-height:32px;padding:6px 12px;font-size:13px;cursor:pointer;border:none;" onclick="backupDownloadFull()">下载离线备份包</button>
                         </div>
                     </div>
-                    <div class="setting-section-desc">「备份数据」从云端导出全部数据（JSON，不含登录口令）；「网页」把当前程序保存成单个 HTML 文件，双击即可离线打开；「下载包」= 网页 + 数据，一份带走。</div>
-                    <div class="cloud-actions">
-                        <button class="btn-secondary" type="button" style="flex:1 1 0;min-width:0;white-space:nowrap;min-height:32px;padding:6px 12px;font-size:13px;cursor:pointer;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--card-bg);color:var(--text-primary);" onclick="backupDownloadFull()">下载包（网页+数据）</button>
-                        <button class="btn-secondary" style="flex:1 1 0;min-width:0;white-space:nowrap;min-height:32px;padding:6px 12px;font-size:13px;cursor:pointer;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--card-bg);color:var(--text-primary);" onclick="backupDownloadLite()">精简版（仅网页）</button>
-                    </div>
+                    <div class="setting-section-desc">把「网页 + 当前全部数据」打包成一个 HTML 文件，双击即可离线打开。用于断网、换设备、存档或发给家人；日常跨设备同步已由云端自动完成，无需手动下载。</div>
                 </div>
             </div>
             <!-- ========== My profile (standalone page, moved out of settings) ========== -->
@@ -6009,22 +6005,7 @@
             const d = new Date(), p = function (n) { return String(n).padStart(2, '0'); };
             return d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()) + '-' + p(d.getHours()) + p(d.getMinutes());
         }
-        // 当前页面即工程本身：序列化成单文件 HTML，双击可离线打开
-        function faPageHtml() {
-            return '<!DOCTYPE html>\n' + document.documentElement.outerHTML;
-        }
-        async function backupDownloadData() {
-            try {
-                const d = await api(FA_API + '/api/backup/download');
-                const payload = { exportedAt: d.exportedAt, backups: d.backups || d };
-                faSaveFile('家庭工作台-数据备份-' + faStamp() + '.json', JSON.stringify(payload, null, 2), 'application/json');
-            } catch (e) {
-                alert('备份下载失败：' + (e && e.message ? e.message : e));
-            }
-        }
-        function backupDownloadLite() {
-            faSaveFile('家庭学习工作台.html', faPageHtml(), 'text/html');
-        }
+        // 唯一下载入口：离线备份包（网页 + 数据，双击即开）
         async function backupDownloadFull() {
             try {
                 const d = await api(FA_API + '/api/backup/download');
@@ -6035,9 +6016,9 @@
                 const doc = '<!DOCTYPE html>\n' + document.documentElement.outerHTML;
                 const idx = doc.lastIndexOf('</body>');
                 const html = (idx > 0) ? doc.slice(0, idx) + tag + doc.slice(idx) : doc;
-                faSaveFile('家庭学习工作台-含数据-' + faStamp() + '.html', html, 'text/html');
+                faSaveFile('家庭学习工作台-离线备份包-' + faStamp() + '.html', html, 'text/html');
             } catch (e) {
-                alert('下载包生成失败：' + (e && e.message ? e.message : e));
+                alert('离线备份包生成失败：' + (e && e.message ? e.message : e));
             }
         }
 

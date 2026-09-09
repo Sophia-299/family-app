@@ -5460,13 +5460,13 @@
                     <div class="setting-section-head">
                         <div class="setting-section-title">⬇️ 备份下载</div>
                         <div class="cloud-head-actions">
-                            <button class="btn-secondary" type="button" style="flex:0 0 auto;min-height:32px;padding:6px 12px;font-size:13px;cursor:pointer;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--card-bg);color:var(--text-primary);white-space:nowrap;" onclick="location.href='https://djmmrlnqdlvhjmxdxgtn.functions.supabase.co/family-app/api/backup/download'">本地备份（数据）</button>
+                            <button class="btn-secondary" type="button" style="flex:0 0 auto;min-height:32px;padding:6px 12px;font-size:13px;cursor:pointer;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--card-bg);color:var(--text-primary);white-space:nowrap;" onclick="backupDownloadData()">备份数据（JSON）</button>
                         </div>
                     </div>
-                    <div class="setting-section-desc">把本机数据打包下载，换设备或重装后可恢复；下载包含完整工程代码（含历史备份）。</div>
+                    <div class="setting-section-desc">「备份数据」从云端导出全部数据（JSON，不含登录口令）；「网页」把当前程序保存成单个 HTML 文件，双击即可离线打开；「下载包」= 网页 + 数据，一份带走。</div>
                     <div class="cloud-actions">
-                        <button class="btn-secondary" type="button" style="flex:1 1 0;min-width:0;white-space:nowrap;min-height:32px;padding:6px 12px;font-size:13px;cursor:pointer;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--card-bg);color:var(--text-primary);" onclick="location.href='/download'">下载包（工程）</button>
-                        <button class="btn-secondary" style="flex:1 1 0;min-width:0;white-space:nowrap;min-height:32px;padding:6px 12px;font-size:13px;cursor:pointer;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--card-bg);color:var(--text-primary);" onclick="location.href='/download/lite'">精简版（仅工程）</button>
+                        <button class="btn-secondary" type="button" style="flex:1 1 0;min-width:0;white-space:nowrap;min-height:32px;padding:6px 12px;font-size:13px;cursor:pointer;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--card-bg);color:var(--text-primary);" onclick="backupDownloadFull()">下载包（网页+数据）</button>
+                        <button class="btn-secondary" style="flex:1 1 0;min-width:0;white-space:nowrap;min-height:32px;padding:6px 12px;font-size:13px;cursor:pointer;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--card-bg);color:var(--text-primary);" onclick="backupDownloadLite()">精简版（仅网页）</button>
                     </div>
                 </div>
             </div>
@@ -5990,6 +5990,51 @@
                 throw new Error(err.error || 'API error');
             }
             return normalizeApi(await res.json());
+        }
+
+        // ===== 备份下载 =====
+        // 单一出口：所有"下载"都走这里生成文件，不再用 location.href 跳到不存在的后端路径。
+        const FA_API = 'https://djmmrlnqdlvhjmxdxgtn.functions.supabase.co/family-app';
+        function faSaveFile(filename, content, mime) {
+            const blob = new Blob([content], { type: (mime || 'text/plain') + ';charset=utf-8' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            setTimeout(function () { URL.revokeObjectURL(url); a.remove(); }, 3000);
+        }
+        function faStamp() {
+            const d = new Date(), p = function (n) { return String(n).padStart(2, '0'); };
+            return d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()) + '-' + p(d.getHours()) + p(d.getMinutes());
+        }
+        // 当前页面即工程本身：序列化成单文件 HTML，双击可离线打开
+        function faPageHtml() {
+            return '<!DOCTYPE html>\n' + document.documentElement.outerHTML;
+        }
+        async function backupDownloadData() {
+            try {
+                const d = await api(FA_API + '/api/backup/download');
+                const payload = { exportedAt: d.exportedAt, backups: d.backups || d };
+                faSaveFile('家庭工作台-数据备份-' + faStamp() + '.json', JSON.stringify(payload, null, 2), 'application/json');
+            } catch (e) {
+                alert('备份下载失败：' + (e && e.message ? e.message : e));
+            }
+        }
+        function backupDownloadLite() {
+            faSaveFile('家庭学习工作台.html', faPageHtml(), 'text/html');
+        }
+        async function backupDownloadFull() {
+            try {
+                const d = await api(FA_API + '/api/backup/download');
+                const payload = { exportedAt: d.exportedAt, backups: d.backups || d };
+                const tag = '<script>window.__FA_BACKUP__=' + JSON.stringify(payload).replace(/<\//g, '<\\/') + ';<\/script>';
+                const html = faPageHtml().replace(/<\/body>/i, tag + '</body>');
+                faSaveFile('家庭学习工作台-含数据-' + faStamp() + '.html', html, 'text/html');
+            } catch (e) {
+                alert('下载包生成失败：' + (e && e.message ? e.message : e));
+            }
         }
 
         // ===== 云端同步 (Supabase) =====

@@ -6030,7 +6030,11 @@
                 const d = await api(FA_API + '/api/backup/download');
                 const payload = { exportedAt: d.exportedAt, backups: d.backups || d };
                 const tag = '<script>window.__FA_BACKUP__=' + JSON.stringify(payload).replace(/<\//g, '<\\/') + ';<\/script>';
-                const html = faPageHtml().replace(/<\/body>/i, tag + '</body>');
+                // 用 lastIndexOf 定位真正的 </body>（head 脚本源码里也有 '</body>' 字符串字面量，
+                // replace 首次匹配会命中它，导致注入脚本截断主脚本 → 重新打开时源码当文字显示="乱"）
+                const doc = '<!DOCTYPE html>\n' + document.documentElement.outerHTML;
+                const idx = doc.lastIndexOf('</body>');
+                const html = (idx > 0) ? doc.slice(0, idx) + tag + doc.slice(idx) : doc;
                 faSaveFile('家庭学习工作台-含数据-' + faStamp() + '.html', html, 'text/html');
             } catch (e) {
                 alert('下载包生成失败：' + (e && e.message ? e.message : e));
@@ -15818,11 +15822,29 @@
             // 启动包：单次请求拉取「本端数据 + 汇率 + 设置(含主题) + 个人资料 + 另一端缓存」，
             // 替代原 5-6 个串行往返（#7）；旧端点仍保留供刷新/后台同步复用。
             let _bundle = null;
+            // 离线下载包：若页面内嵌了 __FA_BACKUP__ 数据快照，直接使用（无需联网，双击即开）
+            if (window.__FA_BACKUP__ && window.__FA_BACKUP__.backups) {
+                const bk = window.__FA_BACKUP__.backups;
+                const other = {};
+                for (const k of Object.keys(bk)) {
+                    if (k !== CHILD_NAME && k !== 'settings' && k !== 'tasks' && k !== 'cloud_config') other[k] = bk[k];
+                }
+                _bundle = {
+                    childData: bk[CHILD_NAME] || null,
+                    otherChildren: other,
+                    settings: bk.settings || {},
+                    rate: { baseRate: 0.20 },
+                    profiles: { parentProfile: {}, childProfiles: {} }
+                };
+                console.log('[initApp] 使用离线嵌入数据（下载包模式）');
+            }
+            if (!_bundle) {
             try {
                 _bundle = await api('https://djmmrlnqdlvhjmxdxgtn.functions.supabase.co/family-app/api/startup?child=' + encodeURIComponent(CHILD_NAME));
             } catch (e) {
                 console.warn('启动包加载失败，回退多请求:', e.message);
             }
+            } // end if(!_bundle): 云端启动包获取
             if (_bundle) {
                 window.__settings = _bundle.settings;            // 含 themeByRole / skipSwitchPassword / parentProfile
                 var _st = ((_bundle.settings && _bundle.settings.themeByRole) || {})[ROLE];

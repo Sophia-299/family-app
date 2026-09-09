@@ -5979,13 +5979,34 @@
             const fullUrl = url + (url.includes('?') ? '&' : '?') + 'role=' + ROLE;
             const token = (window.__faToken || localStorage.getItem('fa_token') || '');
             const headers = Object.assign({}, opts.headers || {}, token ? { 'x-fa-token': token } : {});
-            const res = await fetch(fullUrl, Object.assign({}, opts, { headers }));
-            if (!res.ok) {
-                const err = await res.json().catch(() => ({}));
-                if (res.status === 401) { if (window.__showLoginGate) window.__showLoginGate(); }
-                throw new Error(err.error || 'API error');
+            // 超时 + 失败重试：Supabase 函数冷启动会导致偶发慢/失败，重试一次通常即恢复（401 口令错不重试）。
+            // timeout/retry 可经 opts 覆盖：启动包走后台非阻塞，单发 15s 不重试（避免级联拖慢）。
+            const _timeout = (typeof opts.timeout === 'number' && opts.timeout > 0) ? opts.timeout : 9000;
+            const _tries = (opts.retry === false) ? 1 : 2;
+            let _lastErr = null;
+            for (let _i = 0; _i < _tries; _i++) {
+                const ctrl = new AbortController();
+                const _timer = setTimeout(function () { ctrl.abort(); }, _timeout);
+                try {
+                    const res = await fetch(fullUrl, Object.assign({}, opts, { headers, signal: ctrl.signal }));
+                    clearTimeout(_timer);
+                    if (!res.ok) {
+                        const err = await res.json().catch(function () { return {}; });
+                        if (res.status === 401 && window.__showLoginGate) window.__showLoginGate();
+                        const _e = new Error(err.error || ('API error ' + res.status));
+                        _e.status = res.status;
+                        throw _e;
+                    }
+                    return normalizeApi(await res.json());
+                } catch (e) {
+                    clearTimeout(_timer);
+                    _lastErr = e;
+                    if (e && e.status === 401) break; // 口令错不重试
+                    if (_i < _tries - 1) { await new Promise(function (r) { setTimeout(r, 700); }); continue; }
+                    throw e;
+                }
             }
-            return normalizeApi(await res.json());
+            throw _lastErr;
         }
 
         // ===== 备份下载 =====
@@ -15802,58 +15823,57 @@
 
             // 启动包：单次请求拉取「本端数据 + 汇率 + 设置(含主题) + 个人资料 + 另一端缓存」，
             // 替代原 5-6 个串行往返（#7）；旧端点仍保留供刷新/后台同步复用。
-            let _bundle = null;
-            // 离线下载包：若页面内嵌了 __FA_BACKUP__ 数据快照，直接使用（无需联网，双击即开）
-            if (window.__FA_BACKUP__ && window.__FA_BACKUP__.backups) {
-                const bk = window.__FA_BACKUP__.backups;
-                const other = {};
-                for (const k of Object.keys(bk)) {
-                    if (k !== CHILD_NAME && k !== 'settings' && k !== 'tasks' && k !== 'cloud_config') other[k] = bk[k];
-                }
-                _bundle = {
-                    childData: bk[CHILD_NAME] || null,
-                    otherChildren: other,
-                    settings: bk.settings || {},
-                    rate: { baseRate: 0.20 },
-                    profiles: { parentProfile: {}, childProfiles: {} }
-                };
-                console.log('[initApp] 使用离线嵌入数据（下载包模式）');
-            }
-            if (!_bundle) {
+            // 缓存秒开：先用上次本地数据渲染首屏，避免后端冷启动白屏（启动包回来后覆盖）。不砍功能，仅前置显示。
             try {
-                _bundle = await api('https://djmmrlnqdlvhjmxdxgtn.functions.supabase.co/family-app/api/startup?child=' + encodeURIComponent(CHILD_NAME));
-            } catch (e) {
-                console.warn('启动包加载失败，回退多请求:', e.message);
-            }
-            } // end if(!_bundle): 云端启动包获取
-            if (_bundle) {
-                window.__settings = _bundle.settings;            // 含 themeByRole / skipSwitchPassword / parentProfile
-                var _st = ((_bundle.settings && _bundle.settings.themeByRole) || {})[ROLE];
+                const _cc = localStorage.getItem('wb_child_' + CHILD_NAME);
+                if (_cc) {
+                    childData = JSON.parse(_cc);
+                    childDataCache[CHILD_NAME] = childData;
+                    const _cs = JSON.parse(localStorage.getItem('wb_settings') || '{}');
+                    window.__settings = _cs;
+                    const _ct = ((_cs.themeByRole) || {})[ROLE];
+                    if (_ct && THEMES.some(function (t) { return t.key === _ct; })) applyTheme(_ct, false);
+                    const _cf = ((_cs.fontByRole) || {})[ROLE];
+                    if (_cf === 'noto' || _cf === 'pingfang') applyFont(_cf, false);
+                    requestAnimationFrame(function () { try { updateAllDisplays(); renderHomeStats(); } catch (e) {} });
+                }
+            } catch (e) { console.warn('缓存秒开失败(忽略):', e.message); }
+
+            // ===== 缓存秒开 + 后台静默刷新（非阻塞，根治"卡/不稳"）=====
+            // 首屏用本地缓存同步建好可交互 UI，绝不 await 网络；云端启动包改为后台拉取，
+            // 回来再覆盖刷新。后端冷启动/抖动时页面照常秒开，不白屏、不回退到更重的多请求级联。
+            const _hadCache = !!localStorage.getItem('wb_child_' + CHILD_NAME);
+            function applyBundle(b) {
+                window.__settings = b.settings;
+                var _st = ((b.settings && b.settings.themeByRole) || {})[ROLE];
                 if (_st && THEMES.some(function(t){ return t.key === _st; })) applyTheme(_st, false);
-                var _sf = ((_bundle.settings && _bundle.settings.fontByRole) || {})[ROLE];
+                var _sf = ((b.settings && b.settings.fontByRole) || {})[ROLE];
                 if (_sf === 'noto' || _sf === 'pingfang') applyFont(_sf, false);
-                // 免密开关：启动包路径下 loadProfiles 会因为「设置已加载」跳过开关同步，
-                // 导致服务端是 true、开关却一直显示未勾选，看着像"免密开启失效"。
                 var _ssCb = document.getElementById('skipSwitchPw');
-                if (_ssCb) _ssCb.checked = !!((_bundle.settings || {}).skipSwitchPassword);
-                childData = _bundle.childData;
+                if (_ssCb) _ssCb.checked = !!((b.settings || {}).skipSwitchPassword);
+                childData = b.childData;
                 childDataCache[CHILD_NAME] = childData;
                 _coinReady = true;
                 _lastCoins = (childData && childData.coins) || 0;
-                if (_bundle.otherChildren) {
-                    Object.keys(_bundle.otherChildren).forEach(function(k){ childDataCache[k] = _bundle.otherChildren[k]; });
-                }
-                currentRate = (_bundle.rate && _bundle.rate.baseRate) || 0.20;
-                parentProfile = _bundle.profiles.parentProfile;
-                childProfiles = _bundle.profiles.childProfiles || {};
+                if (b.otherChildren) Object.keys(b.otherChildren).forEach(function(k){ childDataCache[k] = b.otherChildren[k]; });
+                currentRate = (b.rate && b.rate.baseRate) || 0.20;
+                parentProfile = b.profiles.parentProfile;
+                childProfiles = b.profiles.childProfiles || {};
                 try { localStorage.setItem('wb_profiles', JSON.stringify({ parentProfile: parentProfile, childProfiles: childProfiles })); } catch (e) {}
-            } else {
-                // 回退：保留原多请求加载路径（兼容性）
-                try { await loadChildData(); } catch(e) { console.warn('数据加载失败，使用默认值:', e.message); }
+                try { localStorage.setItem('wb_child_' + CHILD_NAME, JSON.stringify(childData || {})); localStorage.setItem('wb_settings', JSON.stringify(window.__settings || {})); } catch (e) {}
+                renderParentChildBar(); updateCoinDisplay(); applyProfileToUI();
+                try { buildCategoryUI(); } catch(e) { console.warn('构建分类页失败:', e.message); }
+                if (IS_PARENT) { try { initParentCarouselSwipe(); goParentCarousel(0); } catch(e) {} }
+                else { try { initCarouselSwipe(); goCarousel(0); } catch(e) {} }
+                try { if (!IS_PARENT) maybeCelebrate(); } catch(e) {}
+                try { renderHomeStats(); } catch(e) {}
+                refreshCurrentView();
+            }
+            async function loadFallback() {
+                try { await loadChildData(); } catch(e) { console.warn('fallback loadChildData 失败:', e.message); }
+                try { localStorage.setItem('wb_child_' + CHILD_NAME, JSON.stringify(childData || {})); localStorage.setItem('wb_settings', JSON.stringify(window.__settings || {})); } catch (e) {}
                 try { const rateData = await api('https://djmmrlnqdlvhjmxdxgtn.functions.supabase.co/family-app/api/rate'); currentRate = rateData.baseRate; updateCoinDisplay(); } catch(e) {}
                 try { await loadProfiles(true); } catch(e) {}
-                // 启动包挂了也要纠正主题/字体：否则会一直沿用本机旧的设置，
-                // 出现「服务端已改成苹方，手机上还是思源黑体」这种看着像开关失灵的情况
                 try {
                     var _s = await api('https://djmmrlnqdlvhjmxdxgtn.functions.supabase.co/family-app/api/settings');
                     window.__settings = _s;
@@ -15864,28 +15884,50 @@
                     var _ssCb2 = document.getElementById('skipSwitchPw');
                     if (_ssCb2) _ssCb2.checked = !!(_s && _s.skipSwitchPassword);
                 } catch(e) {}
+                renderParentChildBar(); updateCoinDisplay(); applyProfileToUI();
+                try { buildCategoryUI(); } catch(e) { console.warn('构建分类页失败:', e.message); }
+                if (IS_PARENT) { try { initParentCarouselSwipe(); goParentCarousel(0); } catch(e) {} }
+                else { try { initCarouselSwipe(); goCarousel(0); } catch(e) {} }
+                try { renderHomeStats(); } catch(e) {}
+                refreshCurrentView();
             }
+
+            // 先用本地缓存把完整 UI 同步建起来（缓存秒开已在上方渲染首屏，这里补全交互/轮播）
             renderParentChildBar();
             updateCoinDisplay();
             applyProfileToUI();
-            // 孩子端：每天首次打开自动签到（幂等）。不 await —— 签到要一次手机网络往返，
-            // 首屏没必要等它，先用启动包数据渲染，签到回来后局部补刷即可。
-            if (!IS_PARENT) {
-                dailySign().then(afterSignRefresh).catch(function (e) { console.warn('dailySign failed', e); });
-            }
-            // Dynamically build category pages + sub-pages (depends on childData's grade/preferences)
             try { buildCategoryUI(); } catch(e) { console.warn('构建分类页失败:', e.message); }
-            // 原先两套（孩子端 homeCarousel / 家长端 homeCarouselP）无条件各跑一次，
-            // 而当前角色只会存在其中一套，另一套靠 initXxxSwipe 内部的 if(!box) return 空转。
-            // 改为按角色只初始化对应那套；顺带让家长端真正调用 goParentCarousel(0)
-            // （原先只调了 goCarousel(0)，家长端轮播从未被显式初始化到第 0 页，一直靠 CSS 默认 transform 兜着）。
             if (IS_PARENT) { try { initParentCarouselSwipe(); goParentCarousel(0); } catch(e) {} }
             else { try { initCarouselSwipe(); goCarousel(0); } catch(e) {} }
-            // 孩子端首页加载时，若当天有节日则撒花庆祝（公告栏已移除，节日庆祝保留）
             try { if (!IS_PARENT) maybeCelebrate(); } catch(e) {}
-            try { renderHomeStats(); } catch(e) {}
-            // Initial load once (get latest data)
-            refreshCurrentView();
+            try { renderHomeStats(); } catch(e) {}refreshCurrentView();
+            // 孩子端每日签到（幂等，非阻塞，用缓存数据即可尝试）
+            if (!IS_PARENT) { dailySign().then(afterSignRefresh).catch(function (e) { console.warn('dailySign failed', e); }); }
+
+            // 后台静默拉取启动包：成功则覆盖刷新；失败则安静沿用缓存（不弹窗、不回退级联）。
+            // 首次访问且无缓存时，才后台补一次轻量多请求回退，保证首开不空白。
+            (async function () {
+                let _b = null;
+                if (window.__FA_BACKUP__ && window.__FA_BACKUP__.backups) {
+                    const bk = window.__FA_BACKUP__.backups;
+                    const other = {};
+                    for (const kk of Object.keys(bk)) {
+                        if (kk !== CHILD_NAME && kk !== 'settings' && kk !== 'tasks' && kk !== 'cloud_config') other[kk] = bk[kk];
+                    }
+                    _b = { childData: bk[CHILD_NAME] || null, otherChildren: other, settings: bk.settings || {}, rate: { baseRate: 0.20 }, profiles: { parentProfile: {}, childProfiles: {} } };
+                    console.log('[initApp] 使用离线嵌入数据（下载包模式）');
+                }
+                if (!_b) {
+                    try {
+                        _b = await api('https://djmmrlnqdlvhjmxdxgtn.functions.supabase.co/family-app/api/startup?child=' + encodeURIComponent(CHILD_NAME), { timeout: 15000, retry: false });
+                    } catch (e) {
+                        console.warn('启动包后台拉取失败，沿用本地缓存（不阻塞）:', e.message);
+                    }
+                }
+                if (_b) { try { applyBundle(_b); } catch (e) { console.warn('应用启动包失败:', e.message); } }
+                else if (!_hadCache) { try { await loadFallback(); } catch (e) { console.warn('首访回退也失败，使用默认值:', e.message); } }
+            })();
+            // 结束非阻塞启动
             // No idle polling: removed 5s timer, switched to event-driven refresh
             // -- Refresh only on 'user manual interaction / tab refocus / manual refresh button', avoiding idle flicker and background requests
             document.addEventListener('visibilitychange', function() {

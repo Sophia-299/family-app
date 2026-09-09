@@ -6635,8 +6635,9 @@
             }
             // 1.4) 切换身份期间金币页操作卡进入占位态，避免闪出另一端的按钮文案
             try { beginQuickCardSwitch(); } catch (e) {}
-            // 1.5) 切换身份时立即套用该角色主题：以云端 themeByRole 为准（家长/孩子各自主题隔离）
+            // 1.5) 切换身份时立即套用该角色主题：先用已知值即时渲染，再向云端确认并校正（家长/孩子各自主题隔离）
             try { applyTheme(themeForRole(role), false); } catch(e) {}
+            try { syncThemeFromCloud(role); } catch(e) {}
             // 2) Sync address bar (replaceState won't trigger a full reload)
             try { history.replaceState(null, '', location.pathname + '?role=' + role); } catch (e) {}
             // 3) Reset edit state to avoid leftovers from the previous identity
@@ -15553,6 +15554,27 @@
                 if (t && THEMES.some(function(x){ return x.key === t; })) return t;
             } catch(e) {}
             return getSavedTheme(role);   // 云端尚无该角色主题时，才退回本机/默认
+        }
+        /* 向云端确认该角色的最新主题并校正。
+           启动包只在首屏拉一次 settings，之后它就成了一份「快照」；若仅凭快照取主题，
+           快照缺失/过期时就会静默退回本机旧值，表现为「切了角色主题却没变」。
+           这里在每次切换身份时主动向云端确认一次，并用返回值覆盖本机镜像，
+           使云端始终是真值、本机只是缓存。seq 用于丢弃过期响应，避免快速连点导致旧结果覆盖新结果。 */
+        var _themeSyncSeq = 0;
+        function syncThemeFromCloud(role) {
+            var seq = ++_themeSyncSeq;
+            try {
+                fetch('https://djmmrlnqdlvhjmxdxgtn.functions.supabase.co/family-app/api/settings?role=' + encodeURIComponent(role), {
+                    headers: { 'x-fa-token': localStorage.getItem('fa_token') || '' }
+                }).then(function (r) { return r.json(); }).then(function (j) {
+                    if (seq !== _themeSyncSeq) return;          // 已有更新的切换，丢弃本次结果
+                    var s = (j && j.data) ? j.data : j;
+                    if (!s) return;
+                    window.__settings = s;                       // 刷新快照，后续取值即最新
+                    var t = (s.themeByRole || {})[role];
+                    if (t && THEMES.some(function (x) { return x.key === t; })) applyTheme(t, false);
+                }).catch(function () {});
+            } catch (e) {}
         }
         function applyTheme(key, syncServer) {
             if (!THEMES.some(function(t){ return t.key === key; })) key = 'gilded';

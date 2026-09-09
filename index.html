@@ -6612,8 +6612,8 @@
             }
             // 1.4) 切换身份期间金币页操作卡进入占位态，避免闪出另一端的按钮文案
             try { beginQuickCardSwitch(); } catch (e) {}
-            // 1.5) 切换身份时立即套用该角色已存主题（家长/孩子各自主题隔离）
-            try { applyTheme(getSavedTheme(role), false); } catch(e) {}
+            // 1.5) 切换身份时立即套用该角色主题：以云端 themeByRole 为准（家长/孩子各自主题隔离）
+            try { applyTheme(themeForRole(role), false); } catch(e) {}
             // 2) Sync address bar (replaceState won't trigger a full reload)
             try { history.replaceState(null, '', location.pathname + '?role=' + role); } catch (e) {}
             // 3) Reset edit state to avoid leftovers from the previous identity
@@ -15517,6 +15517,18 @@
             if (_hc && THEMES.some(function(x){ return x.key === _hc[1]; })) return _hc[1];
             return 'gilded';
         }
+        /* 主题的「唯一真相」是云端 settings.themeByRole；本机 localStorage 仅作首屏防闪缓存。
+           切换身份/读取主题都必须以云端为准——否则会用到本机残留的旧值，
+           出现「切了人主题不变」「多次点击头像主题乱变」这类与云端设置不符的现象。 */
+        function themeForRole(role) {
+            role = role || ROLE;
+            try {
+                var ct = (window.__settings && window.__settings.themeByRole) || {};
+                var t = ct[role];
+                if (t && THEMES.some(function(x){ return x.key === t; })) return t;
+            } catch(e) {}
+            return getSavedTheme(role);   // 云端尚无该角色主题时，才退回本机/默认
+        }
         function applyTheme(key, syncServer) {
             if (!THEMES.some(function(t){ return t.key === key; })) key = 'gilded';
             // 主题类同时挂在 <html> 与 <body>（首屏防闪烁写在 <html>）；切换时两处都清旧加新，
@@ -15671,7 +15683,7 @@
                 var box = document.getElementById(id);
                 if (!box) return;
                 box.innerHTML = '';
-                var saved = getSavedTheme();
+                var saved = themeForRole();
                 THEMES.forEach(function(t) {
                     var card = document.createElement('button');
                     card.type = 'button';
@@ -15693,7 +15705,7 @@
         async function initApp() {
             applyRoleVisibility();
             // Apply saved theme (default gilded = 鎏华琼仪章)；先本地无闪烁套用该角色主题
-            applyTheme(getSavedTheme(ROLE), false);
+            applyTheme(themeForRole(ROLE), false);
             // 本地无闪烁套用该角色字体风格（默认苹方 / PingFang SC，系统字体）
             applyFont(getSavedFont(ROLE), false);
             // 跨设备主题同步改由启动包（/api/startup）统一返回并套用，避免额外请求（#7）

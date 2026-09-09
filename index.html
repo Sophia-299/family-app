@@ -6273,7 +6273,9 @@
             const canStream = (typeof ReadableStream !== 'undefined') && (typeof TextDecoder !== 'undefined')
                 && (typeof Response !== 'undefined') && ('body' in Response.prototype);
             const res = await fetch(url + '?role=' + ROLE + (canStream ? '' : '&stream=0'), {
-                method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(cfg)
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'x-fa-token': (window.__faToken || localStorage.getItem('fa_token') || '') },
+                body: JSON.stringify(cfg)
             });
             if (!res.ok) {
                 const err = await res.json().catch(function () { return {}; });
@@ -6501,7 +6503,10 @@
                 .filter(k => full[k] !== undefined && full[k] !== null)
                 .map(k => encodeURIComponent(k) + '=' + encodeURIComponent(full[k]))
                 .join('&');
-            const res = await fetch(url + (qs ? '?' + qs : ''), { method: 'GET', cache: 'no-store' });
+            const res = await fetch(url + (qs ? '?' + qs : ''), {
+                method: 'GET', cache: 'no-store',
+                headers: { 'x-fa-token': (window.__faToken || localStorage.getItem('fa_token') || '') },
+            });
             if (!res.ok) {
                 const err = await res.json().catch(() => ({}));
                 throw new Error(err.error || ('API error ' + res.status));
@@ -15760,7 +15765,7 @@
             if (syncServer !== false) {
                 try {
                     fetch('https://djmmrlnqdlvhjmxdxgtn.functions.supabase.co/family-app/api/settings/font?role=' + encodeURIComponent(ROLE), {
-                        method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        method: 'POST', headers: { 'Content-Type': 'application/json', 'x-fa-token': (localStorage.getItem('fa_token') || '') },
                         body: JSON.stringify({ font: key })
                     }).catch(function(){});
                 } catch(e) {}
